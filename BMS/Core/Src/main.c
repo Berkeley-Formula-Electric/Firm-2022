@@ -91,6 +91,7 @@ typedef struct {
 
 /* Private variables ---------------------------------------------------------*/
  CAN_HandleTypeDef hcan1;
+CAN_HandleTypeDef hcan2;
 
 SPI_HandleTypeDef hspi1;
 
@@ -107,6 +108,7 @@ static void MX_GPIO_Init(void);
 static void MX_CAN1_Init(void);
 static void MX_SPI1_Init(void);
 static void MX_USART2_UART_Init(void);
+static void MX_CAN2_Init(void);
 /* USER CODE BEGIN PFP */
 
 void measurement_loop(uint8_t datalog_en);
@@ -221,6 +223,7 @@ int main(void)
   MX_CAN1_Init();
   MX_SPI1_Init();
   MX_USART2_UART_Init();
+  MX_CAN2_Init();
   /* USER CODE BEGIN 2 */
 
   LTC6811_init_cfg(N_ICS, accumulator.config);
@@ -230,6 +233,32 @@ int main(void)
 
   LTC6811_reset_crc_count(N_ICS, accumulator.config);
   LTC6811_init_reg_limits(N_ICS, accumulator.config);
+
+  uint32_t filter_id = 0;
+  uint32_t filter_mask = 0x0;
+
+  CAN_FilterTypeDef filter_config;
+  filter_config.FilterBank = 0;
+  filter_config.FilterMode = CAN_FILTERMODE_IDMASK;
+  filter_config.FilterFIFOAssignment = CAN_FILTER_FIFO0;
+  filter_config.FilterIdHigh = filter_id << 5;
+  filter_config.FilterIdLow = 0;
+  filter_config.FilterMaskIdHigh = filter_mask << 5;
+  filter_config.FilterMaskIdLow = 0;
+  filter_config.FilterScale = CAN_FILTERSCALE_32BIT;
+  filter_config.FilterActivation = ENABLE;
+  filter_config.SlaveStartFilterBank = 14;
+
+  HAL_CAN_ConfigFilter(&hcan1, &filter_config);
+
+  if (HAL_CAN_Start(&hcan1) != HAL_OK) {
+    while (1)
+    HAL_UART_Transmit(&huart2, (uint8_t *) "CAN init Error\r\n", strlen("CAN init Error\r\n"), 100);
+  }
+  if (HAL_CAN_Start(&hcan2) != HAL_OK) {
+    while (1)
+    HAL_UART_Transmit(&huart2, (uint8_t *) "CAN init Error\r\n", strlen("CAN init Error\r\n"), 100);
+  }
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -368,6 +397,29 @@ int main(void)
     }
 
 
+    uint32_t tx_mailbox;
+    CAN_TxHeaderTypeDef tx_header;
+    tx_header.DLC = 8;
+    tx_header.IDE = CAN_ID_STD;
+    tx_header.RTR = CAN_RTR_DATA;
+    tx_header.TransmitGlobalTime = DISABLE;
+
+    for (uint16_t bank_idx = 0; bank_idx < N_BANKS; bank_idx += 1) {
+      for (uint16_t cell_idx = 0; cell_idx < 17; cell_idx += 1) {
+        tx_header.StdId = 0x200 + (bank_idx * CELLS_PER_BANK) + cell_idx;
+
+        float data[2];
+
+        data[0] = accumulator.banks[bank_idx].cells[cell_idx].voltage;
+        data[1] = accumulator.banks[bank_idx].cells[cell_idx].temperature;
+
+        if (HAL_CAN_AddTxMessage(&hcan2, &tx_header, (uint8_t *)data, &tx_mailbox) != HAL_OK) {
+          HAL_UART_Transmit(&huart2, (uint8_t *) "CAN TX Error\r\n", strlen("CAN TX Error\r\n"), 100);
+        }
+        HAL_Delay(10);
+      }
+    }
+
     HAL_Delay(1000);
   }
   /* USER CODE END 3 */
@@ -437,7 +489,7 @@ static void MX_CAN1_Init(void)
   /* USER CODE END CAN1_Init 1 */
   hcan1.Instance = CAN1;
   hcan1.Init.Prescaler = 16;
-  hcan1.Init.Mode = CAN_MODE_NORMAL;
+  hcan1.Init.Mode = CAN_MODE_LOOPBACK;
   hcan1.Init.SyncJumpWidth = CAN_SJW_1TQ;
   hcan1.Init.TimeSeg1 = CAN_BS1_2TQ;
   hcan1.Init.TimeSeg2 = CAN_BS2_1TQ;
@@ -454,6 +506,43 @@ static void MX_CAN1_Init(void)
   /* USER CODE BEGIN CAN1_Init 2 */
 
   /* USER CODE END CAN1_Init 2 */
+
+}
+
+/**
+  * @brief CAN2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_CAN2_Init(void)
+{
+
+  /* USER CODE BEGIN CAN2_Init 0 */
+
+  /* USER CODE END CAN2_Init 0 */
+
+  /* USER CODE BEGIN CAN2_Init 1 */
+
+  /* USER CODE END CAN2_Init 1 */
+  hcan2.Instance = CAN2;
+  hcan2.Init.Prescaler = 8;
+  hcan2.Init.Mode = CAN_MODE_NORMAL;
+  hcan2.Init.SyncJumpWidth = CAN_SJW_1TQ;
+  hcan2.Init.TimeSeg1 = CAN_BS1_2TQ;
+  hcan2.Init.TimeSeg2 = CAN_BS2_1TQ;
+  hcan2.Init.TimeTriggeredMode = DISABLE;
+  hcan2.Init.AutoBusOff = DISABLE;
+  hcan2.Init.AutoWakeUp = DISABLE;
+  hcan2.Init.AutoRetransmission = DISABLE;
+  hcan2.Init.ReceiveFifoLocked = DISABLE;
+  hcan2.Init.TransmitFifoPriority = DISABLE;
+  if (HAL_CAN_Init(&hcan2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN CAN2_Init 2 */
+
+  /* USER CODE END CAN2_Init 2 */
 
 }
 
