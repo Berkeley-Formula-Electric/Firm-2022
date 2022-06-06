@@ -28,19 +28,18 @@
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
 
-#define TOTAL_SEGMENT         1
-#define CELL_PER_SEGMENT      17
-#define TOTAL_IC              TOTAL_SEGMENT * 2
-#define TOTAL_CELL            TOTAL_SEGMENT * CELL_PER_SEGMENT
-
 typedef struct {
   float voltage;
   float temperature;
 } Cell;
 
 typedef struct {
-  Cell cells[TOTAL_CELL];
+  Cell cells[17];
 } Bank;
+
+typedef struct {
+  Bank banks[8];
+} Accumulator;
 
 /* USER CODE END PTD */
 
@@ -89,11 +88,13 @@ typedef struct {
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
-SPI_HandleTypeDef hspi1;
+ SPI_HandleTypeDef hspi1;
 
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
+Accumulator accumulator;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -134,11 +135,13 @@ char get_char(void);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
-cell_asic BMS_IC[TOTAL_IC]; //!< Global Battery Variable
+
+Cell bank[TOTAL_CELL];
+cell_asic bms_ic_arr[8]; //!< Global Battery Variable
 
 uint8_t REFON = 1; //!< Reference Powered Up Bit
 uint8_t ADCOPT = 0; //!< ADC Mode option bit
-uint8_t GPIOBITS_A[5] = {1, 1, 0, 0, 0}; //!< GPIO Pin Control // Gpio 1,2,3,4,5    First two are ADC inputs, set to TRUE; latter 3 are MUX sel, outputs
+uint8_t GPIOBITS_A[5] = { 1, 1, 0, 0, 0 }; //!< GPIO Pin Control // Gpio 1,2,3,4,5    First two are ADC inputs, set to TRUE; latter 3 are MUX sel, outputs
 uint16_t UV = UV_THRESHOLD; //!< Under-voltage Comparison Voltage
 uint16_t OV = OV_THRESHOLD; //!< Over-voltage Comparison Voltage
 uint8_t DCCBITS_A[12] = { false, false, false, false, false, false, false, false, false, false, false, false }; //!< Discharge cell switch //Dcc 1,2,3,4,5,6,7,8,9,10,11,12
@@ -164,12 +167,12 @@ void print_rxconfig(void) {
     HAL_UART_Transmit(&huart2, (uint8_t*) str, strlen(str), 100);
 
     for (int i = 0; i < 6; i++) {
-      sprintf(str, ", 0x%d", BMS_IC[current_ic].config.rx_data[i]);
+      sprintf(str, ", 0x%d", bms_ic_arr[current_ic].config.rx_data[i]);
       HAL_UART_Transmit(&huart2, (uint8_t*) str, strlen(str), 100);
     }
 
-    sprintf(str, ", Received PEC: 0x%d, 0x%d\r\n", BMS_IC[current_ic].config.rx_data[6],
-        BMS_IC[current_ic].config.rx_data[7]);
+    sprintf(str, ", Received PEC: 0x%d, 0x%d\r\n", bms_ic_arr[current_ic].config.rx_data[6],
+        bms_ic_arr[current_ic].config.rx_data[7]);
     HAL_UART_Transmit(&huart2, (uint8_t*) str, strlen(str), 100);
   }
 }
@@ -187,190 +190,177 @@ void print_wrconfig(void) {
     HAL_UART_Transmit(&huart2, (uint8_t*) str, strlen(str), 100);
 
     for (int i = 0; i < 6; i++) {
-      sprintf(str, "0x%d", BMS_IC[current_ic].config.tx_data[i]);
+      sprintf(str, "0x%d", bms_ic_arr[current_ic].config.tx_data[i]);
       HAL_UART_Transmit(&huart2, (uint8_t*) str, strlen(str), 100);
 
     }
-    cfg_pec = pec15_calc(6, &BMS_IC[current_ic].config.tx_data[0]);
+    cfg_pec = pec15_calc(6, &bms_ic_arr[current_ic].config.tx_data[0]);
 
     sprintf(str, ", Calculated PEC: 0x%d, 0x%d\r\n", (uint8_t) (cfg_pec >> 8), cfg_pec);
     HAL_UART_Transmit(&huart2, (uint8_t*) str, strlen(str), 100);
   }
 }
 
-int8_t temp_poll(int8_t temperature_ch)
-{
+int8_t temp_poll(int8_t temperature_ch) {
   int8_t error = 0;
-  LTC6811_init_cfg(TOTAL_IC, BMS_IC);
+  LTC6811_init_cfg(TOTAL_IC, bms_ic_arr);
   GPIOBITS_A[4] = (temperature_ch >> 2) & 0b1;
   GPIOBITS_A[3] = (temperature_ch >> 1) & 0b1;
   GPIOBITS_A[2] = (temperature_ch >> 0) & 0b1;
   GPIOBITS_A[1] = 0b1;
   GPIOBITS_A[0] = 0b1;
-  for (uint8_t i = 0; i < TOTAL_IC; i ++)
-  {
-    LTC6811_set_cfgr(i, BMS_IC, REFON, ADCOPT, GPIOBITS_A, DCCBITS_A, DCTOBITS, UV, OV);
+  for (uint8_t i = 0; i < TOTAL_IC; i+=1) {
+    LTC6811_set_cfgr(i, bms_ic_arr, REFON, ADCOPT, GPIOBITS_A, DCCBITS_A, DCTOBITS, UV, OV);
   }
 
-  LTC6811_reset_crc_count(TOTAL_IC, BMS_IC);
-  LTC6811_init_reg_limits(TOTAL_IC, BMS_IC);
+  LTC6811_reset_crc_count(TOTAL_IC, bms_ic_arr);
+  LTC6811_init_reg_limits(TOTAL_IC, bms_ic_arr);
 
   wakeup_sleep(TOTAL_IC);
-  LTC6811_wrcfg(TOTAL_IC, BMS_IC);
+  LTC6811_wrcfg(TOTAL_IC, bms_ic_arr);
 
   wakeup_idle(TOTAL_IC);
   LTC6811_adax(ADC_CONVERSION_MODE, AUX_CH_ALL);
   LTC6811_pollAdc();
   wakeup_idle(TOTAL_IC);
-  error = LTC6811_rdaux(SEL_ALL_REG, TOTAL_IC, BMS_IC); // Set to read back all aux registers
+  error = LTC6811_rdaux(SEL_ALL_REG, TOTAL_IC, bms_ic_arr); // Set to read back all aux registers
   return error;
 }
 
 void measurement_loop(uint8_t datalog_en) {
-
-  Bank bank;
-
   int8_t error = 0;
 
   char str[128];
 
-
-
-  LTC6811_init_cfg(TOTAL_IC, BMS_IC);
+  LTC6811_init_cfg(TOTAL_IC, bms_ic_arr);
   uint8_t temperature_ch = 0;
   GPIOBITS_A[4] = (temperature_ch >> 2) & 0b1;
   GPIOBITS_A[3] = (temperature_ch >> 1) & 0b1;
   GPIOBITS_A[2] = (temperature_ch >> 0) & 0b1;
   GPIOBITS_A[1] = 0b1;
   GPIOBITS_A[0] = 0b1;
-  LTC6811_set_cfgr(0, BMS_IC, REFON, ADCOPT, GPIOBITS_A, DCCBITS_A, DCTOBITS, UV, OV);
-  LTC6811_set_cfgr(1, BMS_IC, REFON, ADCOPT, GPIOBITS_A, DCCBITS_A, DCTOBITS, UV, OV);
+  LTC6811_set_cfgr(0, bms_ic_arr, REFON, ADCOPT, GPIOBITS_A, DCCBITS_A, DCTOBITS, UV, OV);
+  LTC6811_set_cfgr(1, bms_ic_arr, REFON, ADCOPT, GPIOBITS_A, DCCBITS_A, DCTOBITS, UV, OV);
 
-  LTC6811_reset_crc_count(TOTAL_IC, BMS_IC);
-  LTC6811_init_reg_limits(TOTAL_IC, BMS_IC);
+  LTC6811_reset_crc_count(TOTAL_IC, bms_ic_arr);
+  LTC6811_init_reg_limits(TOTAL_IC, bms_ic_arr);
 
   wakeup_sleep(TOTAL_IC);
-  LTC6811_wrcfg(TOTAL_IC, BMS_IC);
-
-
+  LTC6811_wrcfg(TOTAL_IC, bms_ic_arr);
 
   wakeup_idle(TOTAL_IC);
   LTC6811_adcv(ADC_CONVERSION_MODE, ADC_DCP, CELL_CH_TO_CONVERT);
   LTC6811_pollAdc();
   wakeup_idle(TOTAL_IC);
-  error = LTC6811_rdcv(SEL_ALL_REG, TOTAL_IC, BMS_IC);
+  error = LTC6811_rdcv(SEL_ALL_REG, TOTAL_IC, bms_ic_arr);
 
-  for (uint8_t seg = 0; seg < TOTAL_SEGMENT; seg += 1)
-  {
-    bank.cells[seg * 17 + 16].voltage = getVoltage(BMS_IC[seg * 2].cells.c_codes[0]);
-    bank.cells[seg * 17 + 15].voltage = getVoltage(BMS_IC[seg * 2].cells.c_codes[1]);
-    bank.cells[seg * 17 + 14].voltage = getVoltage(BMS_IC[seg * 2].cells.c_codes[2]);
-    bank.cells[seg * 17 + 13].voltage = getVoltage(BMS_IC[seg * 2].cells.c_codes[3]);
-    bank.cells[seg * 17 + 12].voltage = getVoltage(BMS_IC[seg * 2].cells.c_codes[6]);
-    bank.cells[seg * 17 + 11].voltage = getVoltage(BMS_IC[seg * 2].cells.c_codes[7]);
-    bank.cells[seg * 17 + 10].voltage = getVoltage(BMS_IC[seg * 2].cells.c_codes[8]);
-    bank.cells[seg * 17 + 9 ].voltage = getVoltage(BMS_IC[seg * 2].cells.c_codes[9]);
+  for (uint8_t seg = 0; seg < TOTAL_SEGMENT; seg += 1) {
+    bank[seg * 17 + 16].voltage = getVoltage(bms_ic_arr[seg * 2].cells.c_codes[0]);
+    bank[seg * 17 + 15].voltage = getVoltage(bms_ic_arr[seg * 2].cells.c_codes[1]);
+    bank[seg * 17 + 14].voltage = getVoltage(bms_ic_arr[seg * 2].cells.c_codes[2]);
+    bank[seg * 17 + 13].voltage = getVoltage(bms_ic_arr[seg * 2].cells.c_codes[3]);
+    bank[seg * 17 + 12].voltage = getVoltage(bms_ic_arr[seg * 2].cells.c_codes[6]);
+    bank[seg * 17 + 11].voltage = getVoltage(bms_ic_arr[seg * 2].cells.c_codes[7]);
+    bank[seg * 17 + 10].voltage = getVoltage(bms_ic_arr[seg * 2].cells.c_codes[8]);
+    bank[seg * 17 + 9].voltage = getVoltage(bms_ic_arr[seg * 2].cells.c_codes[9]);
 
-    bank.cells[seg * 17 + 8 ].voltage = getVoltage(BMS_IC[seg * 2 + 1].cells.c_codes[0]);
-    bank.cells[seg * 17 + 7 ].voltage = getVoltage(BMS_IC[seg * 2 + 1].cells.c_codes[1]);
-    bank.cells[seg * 17 + 6 ].voltage = getVoltage(BMS_IC[seg * 2 + 1].cells.c_codes[2]);
-    bank.cells[seg * 17 + 5 ].voltage = getVoltage(BMS_IC[seg * 2 + 1].cells.c_codes[3]);
-    bank.cells[seg * 17 + 4 ].voltage = getVoltage(BMS_IC[seg * 2 + 1].cells.c_codes[4]);
-    bank.cells[seg * 17 + 3 ].voltage = getVoltage(BMS_IC[seg * 2 + 1].cells.c_codes[6]);
-    bank.cells[seg * 17 + 2 ].voltage = getVoltage(BMS_IC[seg * 2 + 1].cells.c_codes[7]);
-    bank.cells[seg * 17 + 1 ].voltage = getVoltage(BMS_IC[seg * 2 + 1].cells.c_codes[8]);
-    bank.cells[seg * 17 + 0 ].voltage = getVoltage(BMS_IC[seg * 2 + 1].cells.c_codes[9]);
+    bank[seg * 17 + 8].voltage = getVoltage(bms_ic_arr[seg * 2 + 1].cells.c_codes[0]);
+    bank[seg * 17 + 7].voltage = getVoltage(bms_ic_arr[seg * 2 + 1].cells.c_codes[1]);
+    bank[seg * 17 + 6].voltage = getVoltage(bms_ic_arr[seg * 2 + 1].cells.c_codes[2]);
+    bank[seg * 17 + 5].voltage = getVoltage(bms_ic_arr[seg * 2 + 1].cells.c_codes[3]);
+    bank[seg * 17 + 4].voltage = getVoltage(bms_ic_arr[seg * 2 + 1].cells.c_codes[4]);
+    bank[seg * 17 + 3].voltage = getVoltage(bms_ic_arr[seg * 2 + 1].cells.c_codes[6]);
+    bank[seg * 17 + 2].voltage = getVoltage(bms_ic_arr[seg * 2 + 1].cells.c_codes[7]);
+    bank[seg * 17 + 1].voltage = getVoltage(bms_ic_arr[seg * 2 + 1].cells.c_codes[8]);
+    bank[seg * 17 + 0].voltage = getVoltage(bms_ic_arr[seg * 2 + 1].cells.c_codes[9]);
   }
 
   temp_poll(0);
-  for (uint8_t seg = 0; seg < TOTAL_SEGMENT; seg += 1) 
-  {
-    bank.cells[seg * 17 + 12].temperature = getTemperature(BMS_IC[seg * 2    ].aux.a_codes[0]);
-    bank.cells[seg * 17 + 16].temperature = getTemperature(BMS_IC[seg * 2    ].aux.a_codes[1]);
-    bank.cells[seg * 17 + 4 ].temperature = getTemperature(BMS_IC[seg * 2 + 1].aux.a_codes[0]);
-    bank.cells[seg * 17 + 8 ].temperature = getTemperature(BMS_IC[seg * 2 + 1].aux.a_codes[1]);
+  for (uint8_t seg = 0; seg < TOTAL_SEGMENT; seg += 1) {
+    bank[seg * 17 + 12].temperature = getTemperature(bms_ic_arr[seg * 2].aux.a_codes[0]);
+    bank[seg * 17 + 16].temperature = getTemperature(bms_ic_arr[seg * 2].aux.a_codes[1]);
+    bank[seg * 17 + 4].temperature = getTemperature(bms_ic_arr[seg * 2 + 1].aux.a_codes[0]);
+    bank[seg * 17 + 8].temperature = getTemperature(bms_ic_arr[seg * 2 + 1].aux.a_codes[1]);
   }
 
   temp_poll(1);
-  for (uint8_t seg = 0; seg < TOTAL_SEGMENT; seg += 1) 
-  {
-    bank.cells[seg * 17 + 11].temperature = getTemperature(BMS_IC[seg * 2    ].aux.a_codes[0]);
-    bank.cells[seg * 17 + 15].temperature = getTemperature(BMS_IC[seg * 2    ].aux.a_codes[1]);
-    bank.cells[seg * 17 + 3 ].temperature = getTemperature(BMS_IC[seg * 2 + 1].aux.a_codes[0]);
-    bank.cells[seg * 17 + 7 ].temperature = getTemperature(BMS_IC[seg * 2 + 1].aux.a_codes[1]);
+  for (uint8_t seg = 0; seg < TOTAL_SEGMENT; seg += 1) {
+    bank[seg * 17 + 11].temperature = getTemperature(bms_ic_arr[seg * 2].aux.a_codes[0]);
+    bank[seg * 17 + 15].temperature = getTemperature(bms_ic_arr[seg * 2].aux.a_codes[1]);
+    bank[seg * 17 + 3].temperature = getTemperature(bms_ic_arr[seg * 2 + 1].aux.a_codes[0]);
+    bank[seg * 17 + 7].temperature = getTemperature(bms_ic_arr[seg * 2 + 1].aux.a_codes[1]);
   }
 
   temp_poll(2);
-  for (uint8_t seg = 0; seg < TOTAL_SEGMENT; seg += 1) 
-  {
-    bank.cells[seg * 17 + 10].temperature = getTemperature(BMS_IC[seg * 2    ].aux.a_codes[0]);
-    bank.cells[seg * 17 + 14].temperature = getTemperature(BMS_IC[seg * 2    ].aux.a_codes[1]);
-    bank.cells[seg * 17 + 2 ].temperature = getTemperature(BMS_IC[seg * 2 + 1].aux.a_codes[0]);
-    bank.cells[seg * 17 + 6 ].temperature = getTemperature(BMS_IC[seg * 2 + 1].aux.a_codes[1]);
+  for (uint8_t seg = 0; seg < TOTAL_SEGMENT; seg += 1) {
+    bank[seg * 17 + 10].temperature = getTemperature(bms_ic_arr[seg * 2].aux.a_codes[0]);
+    bank[seg * 17 + 14].temperature = getTemperature(bms_ic_arr[seg * 2].aux.a_codes[1]);
+    bank[seg * 17 + 2].temperature = getTemperature(bms_ic_arr[seg * 2 + 1].aux.a_codes[0]);
+    bank[seg * 17 + 6].temperature = getTemperature(bms_ic_arr[seg * 2 + 1].aux.a_codes[1]);
   }
 
   temp_poll(3);
-  for (uint8_t seg = 0; seg < TOTAL_SEGMENT; seg += 1) 
-  {
-    bank.cells[seg * 17 + 9 ].temperature = getTemperature(BMS_IC[seg * 2    ].aux.a_codes[0]);
-    bank.cells[seg * 17 + 13].temperature = getTemperature(BMS_IC[seg * 2    ].aux.a_codes[1]);
-    bank.cells[seg * 17 + 1 ].temperature = getTemperature(BMS_IC[seg * 2 + 1].aux.a_codes[0]);
-    bank.cells[seg * 17 + 5 ].temperature = getTemperature(BMS_IC[seg * 2 + 1].aux.a_codes[1]);
+  for (uint8_t seg = 0; seg < TOTAL_SEGMENT; seg += 1) {
+    bank[seg * 17 + 9].temperature = getTemperature(bms_ic_arr[seg * 2].aux.a_codes[0]);
+    bank[seg * 17 + 13].temperature = getTemperature(bms_ic_arr[seg * 2].aux.a_codes[1]);
+    bank[seg * 17 + 1].temperature = getTemperature(bms_ic_arr[seg * 2 + 1].aux.a_codes[0]);
+    bank[seg * 17 + 5].temperature = getTemperature(bms_ic_arr[seg * 2 + 1].aux.a_codes[1]);
   }
 
   temp_poll(4);
-  for (uint8_t seg = 0; seg < TOTAL_SEGMENT; seg += 1) 
-  bank.cells[seg * 17].temperature = getTemperature(BMS_IC[seg * 2 + 1].aux.a_codes[0]);
+  for (uint8_t seg = 0; seg < TOTAL_SEGMENT; seg += 1)
+    bank[seg * 17].temperature = getTemperature(bms_ic_arr[seg * 2 + 1].aux.a_codes[0]);
 
-  sprintf(str, "======= Bank %d ========\r\n", 0);
-  HAL_UART_Transmit(&huart2, (uint8_t*) str, strlen(str), 100);
 
-  sprintf(str, "Cells:\r\n");
-  HAL_UART_Transmit(&huart2, (uint8_t*) str, strlen(str), 100);
-
-  for (uint16_t cell_idx=0; cell_idx<17; cell_idx+=1) {
-    sprintf(str, "%d\t", cell_idx + 1);
-//    sprintf(str, "%01X\t", cell_idx + 1);
+  for (uint16_t i=0; i<8; i+=1) {
+    sprintf(str, "======= Bank %d ========\r\n", i);
     HAL_UART_Transmit(&huart2, (uint8_t*) str, strlen(str), 100);
-  }
 
-  sprintf(str, "\r\n");
-  HAL_UART_Transmit(&huart2, (uint8_t*) str, strlen(str), 100);
-
-
-  for (uint16_t cell_idx=0; cell_idx<17; cell_idx+=1) {
-    sprintf(str, "%.3f\t", bank.cells[cell_idx].voltage);
+    sprintf(str, "Cells:\r\n");
     HAL_UART_Transmit(&huart2, (uint8_t*) str, strlen(str), 100);
-  }
 
-  sprintf(str, "\r\n");
-  HAL_UART_Transmit(&huart2, (uint8_t*) str, strlen(str), 100);
-
-
-  for (uint16_t cell_idx=0; cell_idx<17; cell_idx+=1) {
-    sprintf(str, "%.3f\t", bank.cells[cell_idx].temperature);
-    HAL_UART_Transmit(&huart2, (uint8_t*) str, strlen(str), 100);
-  }
-
+    for (uint16_t cell_idx = 0; cell_idx < 17; cell_idx += 1) {
+      sprintf(str, "%d\t", cell_idx + 1);
+  //    sprintf(str, "%01X\t", cell_idx + 1);
+      HAL_UART_Transmit(&huart2, (uint8_t*) str, strlen(str), 100);
+    }
 
     sprintf(str, "\r\n");
     HAL_UART_Transmit(&huart2, (uint8_t*) str, strlen(str), 100);
 
-    sprintf(str, "Vref2: %.3f\r\n\r\n", BMS_IC[0].aux.a_codes[5] * 0.0001);
+    for (uint16_t cell_idx = 0; cell_idx < 17; cell_idx += 1) {
+      sprintf(str, "%.3f\t", bank[i * 17 + cell_idx].voltage);
+      HAL_UART_Transmit(&huart2, (uint8_t*) str, strlen(str), 100);
+    }
+
+    sprintf(str, "\r\n");
     HAL_UART_Transmit(&huart2, (uint8_t*) str, strlen(str), 100);
+
+    for (uint16_t cell_idx = 0; cell_idx < 17; cell_idx += 1) {
+      sprintf(str, "%.3f\t", bank[i * 17 + cell_idx].temperature);
+      HAL_UART_Transmit(&huart2, (uint8_t*) str, strlen(str), 100);
+    }
+
+    sprintf(str, "\r\n");
+    HAL_UART_Transmit(&huart2, (uint8_t*) str, strlen(str), 100);
+
+    sprintf(str, "Vref2: %.3f\r\n\r\n", bms_ic_arr[i].aux.a_codes[5] * 0.0001);
+    HAL_UART_Transmit(&huart2, (uint8_t*) str, strlen(str), 100);
+  }
+
 
   HAL_Delay(MEASUREMENT_LOOP_TIME);
 
 }
 
-
 /* USER CODE END 0 */
 
 /**
- * @brief  The application entry point.
- * @retval int
- */
-int main(void) {
+  * @brief  The application entry point.
+  * @retval int
+  */
+int main(void)
+{
   /* USER CODE BEGIN 1 */
 
   /* USER CODE END 1 */
@@ -400,20 +390,19 @@ int main(void) {
 //  Serial.begin(115200);
 //  quikeval_SPI_connect();
 //  spi_enable(SPI_CLOCK_DIV16); // This will set the Linduino to have a 1MHz Clock
-  LTC6811_init_cfg(TOTAL_IC, BMS_IC);
-  uint8_t temperature_ch=0;
-        GPIOBITS_A[4] = (temperature_ch >> 2) & 0b1;
-        GPIOBITS_A[3] = (temperature_ch >> 1) & 0b1;
-        GPIOBITS_A[2] = (temperature_ch >> 0) & 0b1;
-        GPIOBITS_A[1] = 0b1;
-        GPIOBITS_A[0] = 0b1;
-        LTC6811_set_cfgr(0, BMS_IC, REFON, ADCOPT, GPIOBITS_A, DCCBITS_A, DCTOBITS, UV, OV);
+  LTC6811_init_cfg(TOTAL_IC, bms_ic_arr);
+  uint8_t temperature_ch = 0;
+  GPIOBITS_A[4] = (temperature_ch >> 2) & 0b1;
+  GPIOBITS_A[3] = (temperature_ch >> 1) & 0b1;
+  GPIOBITS_A[2] = (temperature_ch >> 0) & 0b1;
+  GPIOBITS_A[1] = 0b1;
+  GPIOBITS_A[0] = 0b1;
+  LTC6811_set_cfgr(0, bms_ic_arr, REFON, ADCOPT, GPIOBITS_A, DCCBITS_A, DCTOBITS, UV, OV);
 
-    //    temperatures[temperature_ch] = BMS_IC[ic_idx].aux.a_codes[1];
+  //    temperatures[temperature_ch] = bms_ic_arr[ic_idx].aux.a_codes[1];
 
-
-  LTC6811_reset_crc_count(TOTAL_IC, BMS_IC);
-  LTC6811_init_reg_limits(TOTAL_IC, BMS_IC);
+  LTC6811_reset_crc_count(TOTAL_IC, bms_ic_arr);
+  LTC6811_init_reg_limits(TOTAL_IC, bms_ic_arr);
 //  print_menu();
 
   /* USER CODE END 2 */
@@ -433,48 +422,53 @@ int main(void) {
 }
 
 /**
- * @brief System Clock Configuration
- * @retval None
- */
-void SystemClock_Config(void) {
-  RCC_OscInitTypeDef RCC_OscInitStruct = { 0 };
-  RCC_ClkInitTypeDef RCC_ClkInitStruct = { 0 };
+  * @brief System Clock Configuration
+  * @retval None
+  */
+void SystemClock_Config(void)
+{
+  RCC_OscInitTypeDef RCC_OscInitStruct = {0};
+  RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
 
   /** Configure the main internal regulator output voltage
-   */
+  */
   __HAL_RCC_PWR_CLK_ENABLE();
   __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE3);
 
   /** Initializes the RCC Oscillators according to the specified parameters
-   * in the RCC_OscInitTypeDef structure.
-   */
+  * in the RCC_OscInitTypeDef structure.
+  */
   RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
   RCC_OscInitStruct.HSIState = RCC_HSI_ON;
   RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_NONE;
-  if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK) {
+  if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
+  {
     Error_Handler();
   }
 
   /** Initializes the CPU, AHB and APB buses clocks
-   */
-  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_SYSCLK | RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2;
+  */
+  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
+                              |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
   RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_HSI;
   RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
   RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
   RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
 
-  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_0) != HAL_OK) {
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_0) != HAL_OK)
+  {
     Error_Handler();
   }
 }
 
 /**
- * @brief SPI1 Initialization Function
- * @param None
- * @retval None
- */
-static void MX_SPI1_Init(void) {
+  * @brief SPI1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_SPI1_Init(void)
+{
 
   /* USER CODE BEGIN SPI1_Init 0 */
 
@@ -496,7 +490,8 @@ static void MX_SPI1_Init(void) {
   hspi1.Init.TIMode = SPI_TIMODE_DISABLE;
   hspi1.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
   hspi1.Init.CRCPolynomial = 10;
-  if (HAL_SPI_Init(&hspi1) != HAL_OK) {
+  if (HAL_SPI_Init(&hspi1) != HAL_OK)
+  {
     Error_Handler();
   }
   /* USER CODE BEGIN SPI1_Init 2 */
@@ -506,11 +501,12 @@ static void MX_SPI1_Init(void) {
 }
 
 /**
- * @brief USART2 Initialization Function
- * @param None
- * @retval None
- */
-static void MX_USART2_UART_Init(void) {
+  * @brief USART2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_USART2_UART_Init(void)
+{
 
   /* USER CODE BEGIN USART2_Init 0 */
 
@@ -527,7 +523,8 @@ static void MX_USART2_UART_Init(void) {
   huart2.Init.Mode = UART_MODE_TX_RX;
   huart2.Init.HwFlowCtl = UART_HWCONTROL_NONE;
   huart2.Init.OverSampling = UART_OVERSAMPLING_16;
-  if (HAL_UART_Init(&huart2) != HAL_OK) {
+  if (HAL_UART_Init(&huart2) != HAL_OK)
+  {
     Error_Handler();
   }
   /* USER CODE BEGIN USART2_Init 2 */
@@ -537,12 +534,13 @@ static void MX_USART2_UART_Init(void) {
 }
 
 /**
- * @brief GPIO Initialization Function
- * @param None
- * @retval None
- */
-static void MX_GPIO_Init(void) {
-  GPIO_InitTypeDef GPIO_InitStruct = { 0 };
+  * @brief GPIO Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_GPIO_Init(void)
+{
+  GPIO_InitTypeDef GPIO_InitStruct = {0};
 
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOA_CLK_ENABLE();
@@ -565,10 +563,11 @@ static void MX_GPIO_Init(void) {
 /* USER CODE END 4 */
 
 /**
- * @brief  This function is executed in case of error occurrence.
- * @retval None
- */
-void Error_Handler(void) {
+  * @brief  This function is executed in case of error occurrence.
+  * @retval None
+  */
+void Error_Handler(void)
+{
   /* USER CODE BEGIN Error_Handler_Debug */
   /* User can add his own implementation to report the HAL error return state */
   __disable_irq();
