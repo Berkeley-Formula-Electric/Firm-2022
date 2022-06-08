@@ -42,6 +42,9 @@
 /* Private variables ---------------------------------------------------------*/
  ADC_HandleTypeDef hadc1;
 
+CAN_HandleTypeDef hcan1;
+CAN_HandleTypeDef hcan2;
+
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
@@ -53,6 +56,8 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_ADC1_Init(void);
 static void MX_USART2_UART_Init(void);
+static void MX_CAN1_Init(void);
+static void MX_CAN2_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -71,7 +76,23 @@ float FEB_ADC_sampleChannel(ADC_HandleTypeDef *ADCx, uint32_t channel) {
   HAL_ADC_PollForConversion(ADCx, 100);
 
   return (float)HAL_ADC_GetValue(ADCx) * 3.3 / 4096.;
+}
 
+uint8_t FEB_CAN_transmit(CAN_HandleTypeDef *CANx, uint16_t can_id, uint8_t *data, uint16_t size) {
+  uint32_t mailbox;
+
+  CAN_TxHeaderTypeDef header;
+  header.DLC = size;
+  header.IDE = CAN_ID_STD;
+  header.RTR = CAN_RTR_DATA;
+  header.StdId = can_id;
+  header.TransmitGlobalTime = DISABLE;
+
+  if (HAL_CAN_AddTxMessage(CANx, &header, (uint8_t *)data, &mailbox) != HAL_OK) {
+    HAL_UART_Transmit(&huart2, (uint8_t *) "<APPS> [ERROR] CAN TX error\r\n", strlen("<APPS> [ERROR] CAN TX error\r\n"), 100);
+    return 1;
+  }
+  return 0;
 }
 
 
@@ -107,24 +128,53 @@ int main(void)
   MX_GPIO_Init();
   MX_ADC1_Init();
   MX_USART2_UART_Init();
+  MX_CAN1_Init();
+  MX_CAN2_Init();
   /* USER CODE BEGIN 2 */
+  uint32_t filter_id = 0;
+  uint32_t filter_mask = 0x0;
 
+  CAN_FilterTypeDef filter_config;
+  filter_config.FilterBank = 0;
+  filter_config.FilterMode = CAN_FILTERMODE_IDMASK;
+  filter_config.FilterFIFOAssignment = CAN_FILTER_FIFO0;
+  filter_config.FilterIdHigh = filter_id << 5;
+  filter_config.FilterIdLow = 0;
+  filter_config.FilterMaskIdHigh = filter_mask << 5;
+  filter_config.FilterMaskIdLow = 0;
+  filter_config.FilterScale = CAN_FILTERSCALE_32BIT;
+  filter_config.FilterActivation = ENABLE;
+  filter_config.SlaveStartFilterBank = 14;
+
+  HAL_CAN_ConfigFilter(&hcan1, &filter_config);
+
+  if (HAL_CAN_Start(&hcan1) != HAL_OK) {
+    while (1)
+    HAL_UART_Transmit(&huart2, (uint8_t *) "<APPS> [ERROR] CAN1 init error\r\n", strlen("<APPS> [ERROR] CAN1 init error\r\n"), 100);
+  }
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  while (1)
-  {
+  while (1) {
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    float acc_pedal_1 = FEB_ADC_sampleChannel(&hadc1, ADC_CHANNEL_10);
-    float acc_pedal_2 = FEB_ADC_sampleChannel(&hadc1, ADC_CHANNEL_11);
-    float brake_pedal = FEB_ADC_sampleChannel(&hadc1, ADC_CHANNEL_12);
+    float brake_pedal[2];
+    brake_pedal[0] = FEB_ADC_sampleChannel(&hadc1, ADC_CHANNEL_12);
+
+    float acc_pedal[2];
+    acc_pedal[0] = FEB_ADC_sampleChannel(&hadc1, ADC_CHANNEL_10);
+    acc_pedal[1] = FEB_ADC_sampleChannel(&hadc1, ADC_CHANNEL_11);
+
+    FEB_CAN_transmit(&hcan1, 0x200, (uint8_t *)brake_pedal, 8);
+    FEB_CAN_transmit(&hcan1, 0x201, (uint8_t *)acc_pedal, 8);
 
     char str[128];
-    sprintf(str, "ACC: %f, %f \tBRAKE: %f\r\n", acc_pedal_1, acc_pedal_2, brake_pedal);
+    sprintf(str, "<APPS> [INFO] BRAKE(0x100): %f \tACC(0x101): %f, %f\r\n", brake_pedal[0], acc_pedal[0], acc_pedal[1]);
     HAL_UART_Transmit(&huart2, (uint8_t *)str, strlen(str), 100);
+
+    HAL_Delay(10);
   }
   /* USER CODE END 3 */
 }
@@ -141,7 +191,7 @@ void SystemClock_Config(void)
   /** Configure the main internal regulator output voltage
   */
   __HAL_RCC_PWR_CLK_ENABLE();
-  __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE1);
+  __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE2);
 
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
@@ -152,7 +202,7 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI;
   RCC_OscInitStruct.PLL.PLLM = 8;
-  RCC_OscInitStruct.PLL.PLLN = 144;
+  RCC_OscInitStruct.PLL.PLLN = 128;
   RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
   RCC_OscInitStruct.PLL.PLLQ = 2;
   RCC_OscInitStruct.PLL.PLLR = 2;
@@ -229,6 +279,80 @@ static void MX_ADC1_Init(void)
 }
 
 /**
+  * @brief CAN1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_CAN1_Init(void)
+{
+
+  /* USER CODE BEGIN CAN1_Init 0 */
+
+  /* USER CODE END CAN1_Init 0 */
+
+  /* USER CODE BEGIN CAN1_Init 1 */
+
+  /* USER CODE END CAN1_Init 1 */
+  hcan1.Instance = CAN1;
+  hcan1.Init.Prescaler = 16;
+  hcan1.Init.Mode = CAN_MODE_NORMAL;
+  hcan1.Init.SyncJumpWidth = CAN_SJW_1TQ;
+  hcan1.Init.TimeSeg1 = CAN_BS1_2TQ;
+  hcan1.Init.TimeSeg2 = CAN_BS2_1TQ;
+  hcan1.Init.TimeTriggeredMode = DISABLE;
+  hcan1.Init.AutoBusOff = DISABLE;
+  hcan1.Init.AutoWakeUp = DISABLE;
+  hcan1.Init.AutoRetransmission = DISABLE;
+  hcan1.Init.ReceiveFifoLocked = DISABLE;
+  hcan1.Init.TransmitFifoPriority = DISABLE;
+  if (HAL_CAN_Init(&hcan1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN CAN1_Init 2 */
+
+  /* USER CODE END CAN1_Init 2 */
+
+}
+
+/**
+  * @brief CAN2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_CAN2_Init(void)
+{
+
+  /* USER CODE BEGIN CAN2_Init 0 */
+
+  /* USER CODE END CAN2_Init 0 */
+
+  /* USER CODE BEGIN CAN2_Init 1 */
+
+  /* USER CODE END CAN2_Init 1 */
+  hcan2.Instance = CAN2;
+  hcan2.Init.Prescaler = 8;
+  hcan2.Init.Mode = CAN_MODE_NORMAL;
+  hcan2.Init.SyncJumpWidth = CAN_SJW_1TQ;
+  hcan2.Init.TimeSeg1 = CAN_BS1_2TQ;
+  hcan2.Init.TimeSeg2 = CAN_BS2_1TQ;
+  hcan2.Init.TimeTriggeredMode = DISABLE;
+  hcan2.Init.AutoBusOff = DISABLE;
+  hcan2.Init.AutoWakeUp = DISABLE;
+  hcan2.Init.AutoRetransmission = DISABLE;
+  hcan2.Init.ReceiveFifoLocked = DISABLE;
+  hcan2.Init.TransmitFifoPriority = DISABLE;
+  if (HAL_CAN_Init(&hcan2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN CAN2_Init 2 */
+
+  /* USER CODE END CAN2_Init 2 */
+
+}
+
+/**
   * @brief USART2 Initialization Function
   * @param None
   * @retval None
@@ -272,6 +396,7 @@ static void MX_GPIO_Init(void)
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
+  __HAL_RCC_GPIOB_CLK_ENABLE();
 
 }
 
