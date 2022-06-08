@@ -160,7 +160,8 @@ float getVoltage(uint16_t val) {
 }
 
 float getTemperature(uint16_t val) {
-  return val == 65535 ? -42 : val * 0.0001;
+//  return val == 65535 ? -42 : val * 0.0001;
+  return 7550 - 16186 * (0.0001 * val) + 13149*pow(0.0001 * val,2) - 4755*pow(0.0001 * val,3) + 642*pow(0.0001 * val,4);
 }
 
 
@@ -406,7 +407,7 @@ int main(void)
 
     for (uint16_t bank_idx = 0; bank_idx < N_BANKS; bank_idx += 1) {
       for (uint16_t cell_idx = 0; cell_idx < 17; cell_idx += 1) {
-        tx_header.StdId = 0x200 + (bank_idx * CELLS_PER_BANK) + cell_idx;
+        tx_header.StdId = 0x500 + (bank_idx * CELLS_PER_BANK) + cell_idx;
 
         float data[2];
 
