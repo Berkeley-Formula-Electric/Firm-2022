@@ -27,11 +27,50 @@
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
+struct {
+  uint16_t torque;
+  uint8_t enabled;
+
+  uint8_t other_faults;
+
+  uint8_t prestop_called;
+
+  uint16_t setpoint;
+  float k_p;
+  float k_i;
+  float period;
+  uint16_t error_sum;
+  uint16_t error_sum_counter;
+  uint16_t error_sum_thresh;
+  uint16_t windup_thresh;
+
+  float motor_speed;
+
+  float throttle_thresh; //  In Watts
+  float abs_thresh; //  In Watts
+} RMSControl;
+
+struct {
+  uint8_t enabled;
+
+  float motor_speed;
+  float current; // In amps times 10
+  float voltage; // In volts times 10
+} RMSStatus;
 
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+
+#define BRAKE_PEDAL_RESET       0.566
+#define BRAKE_PEDAL_FULL        0.581
+
+#define ACC_PEDAL_0_RESET       1.128
+#define ACC_PEDAL_0_FULL        0.305
+#define ACC_PEDAL_1_RESET       1.579
+#define ACC_PEDAL_1_FULL        1.294
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -60,10 +99,6 @@ static void MX_CAN1_Init(void);
 static void MX_CAN2_Init(void);
 /* USER CODE BEGIN PFP */
 
-/* USER CODE END PFP */
-
-/* Private user code ---------------------------------------------------------*/
-/* USER CODE BEGIN 0 */
 float FEB_ADC_sampleChannel(ADC_HandleTypeDef *ADCx, uint32_t channel) {
   ADC_ChannelConfTypeDef adc_config = {0};
 
@@ -78,7 +113,7 @@ float FEB_ADC_sampleChannel(ADC_HandleTypeDef *ADCx, uint32_t channel) {
   return (float)HAL_ADC_GetValue(ADCx) * 3.3 / 4096.;
 }
 
-uint8_t FEB_CAN_transmit(CAN_HandleTypeDef *CANx, uint16_t can_id, uint8_t *data, uint16_t size) {
+HAL_StatusTypeDef FEB_CAN_transmit(CAN_HandleTypeDef *CANx, uint16_t can_id, uint8_t *data, uint16_t size, uint8_t is_blocking) {
   uint32_t mailbox;
 
   CAN_TxHeaderTypeDef header;
@@ -88,13 +123,149 @@ uint8_t FEB_CAN_transmit(CAN_HandleTypeDef *CANx, uint16_t can_id, uint8_t *data
   header.StdId = can_id;
   header.TransmitGlobalTime = DISABLE;
 
+  uint32_t tx_fifo_level = HAL_CAN_GetTxMailboxesFreeLevel(CANx);
+
+  if (is_blocking) {
+    while (tx_fifo_level == 0) {
+      tx_fifo_level = HAL_CAN_GetTxMailboxesFreeLevel(CANx);
+    }
+  }
+  else {
+    HAL_UART_Transmit(&huart2, (uint8_t *) "<APPS> [ERROR] CAN busy\r\n", strlen("<APPS> [ERROR] CAN busy\r\n"), 100);
+    return HAL_BUSY;
+  }
+
   if (HAL_CAN_AddTxMessage(CANx, &header, (uint8_t *)data, &mailbox) != HAL_OK) {
     HAL_UART_Transmit(&huart2, (uint8_t *) "<APPS> [ERROR] CAN TX error\r\n", strlen("<APPS> [ERROR] CAN TX error\r\n"), 100);
-    return 1;
+    return HAL_ERROR;
   }
-  return 0;
+  return HAL_OK;
 }
 
+CAN_HandleTypeDef *RMS_CANx;
+
+void FEB_RMS_init(CAN_HandleTypeDef *CANx) {
+  RMS_CANx = CANx;
+
+  RMSControl.enabled = 0;
+  RMSControl.torque = 0;
+  RMSControl.prestop_called = 0;
+
+  RMSControl.motor_speed = 0;
+  RMSControl.setpoint = 500;
+
+  RMSControl.k_p = 0.16;
+  RMSControl.k_i = 0.05;
+  RMSControl.period = 0.01;
+  RMSControl.windup_thresh = 3000;
+
+  RMSControl.error_sum = 0;
+  RMSControl.error_sum_counter = 0;
+  RMSControl.error_sum_thresh = 1000;
+
+
+  RMSControl.throttle_thresh = 10. * 1000;
+  RMSControl.abs_thresh = 15. * 1000;
+
+  RMSControl.other_faults = -1;
+
+  uint16_t can_id = 0x411;  // hex(1041)
+  uint32_t delay_between_message = 5;
+  uint8_t is_blocking = 1;
+
+  uint8_t msg_off_data[8] = {0x34, 0, 1, 0, 0, 0, 0, 0};
+  FEB_CAN_transmit(RMS_CANx, can_id, msg_off_data, 8, is_blocking);
+  HAL_Delay(delay_between_message);
+
+  // Set voltage 1 freqency
+  uint8_t v1_freq_data[8] = {0x21, 2, 0, 10, 0, 0, 0, 0};
+  FEB_CAN_transmit(RMS_CANx, can_id, v1_freq_data, 8, is_blocking);
+  HAL_Delay(delay_between_message);
+
+  // Turn off voltage 2
+  uint8_t v2_off_data[8] = { 0x22, 0, 0, 0, 0, 0, 0 };
+  FEB_CAN_transmit(RMS_CANx, can_id, v2_off_data, 8, is_blocking);
+  HAL_Delay(delay_between_message);
+
+  // Turn off voltage 3
+  uint8_t v3_off_data[8] = { 0x23, 0, 0, 0, 0, 0, 0, 0 };
+  FEB_CAN_transmit(RMS_CANx, can_id, v3_off_data, 8, is_blocking);
+  HAL_Delay(delay_between_message);
+
+  // Lower energy frequency
+  uint8_t lower_energy_data[8] = { 0x27, 2, 0, 0x64, 0, 0, 0, 0 };
+  FEB_CAN_transmit(RMS_CANx, can_id, lower_energy_data, 8, is_blocking);
+  HAL_Delay(delay_between_message);
+
+  // Store
+  uint8_t store_data[8] = { 0x32, 0, 0, 0, 0, 0, 0, 0 };
+  FEB_CAN_transmit(RMS_CANx, can_id, store_data, 8, is_blocking);
+  HAL_Delay(delay_between_message);
+
+  // Turn on messages
+  uint8_t msg_on_data[8] = { 0x34, 1, 1, 0, 0, 0, 0, 0 };
+  FEB_CAN_transmit(RMS_CANx, can_id, msg_on_data, 8, is_blocking);
+  HAL_Delay(delay_between_message);
+
+
+
+  for (int i=0; i<20; i+=1) {
+    FEB_RMS_setTorque(0);
+    HAL_Delay(100);
+  }
+}
+
+void FEB_RMS_updateTorque() {
+  uint8_t buffer[8] = {RMSControl.torque & 0xFF, RMSControl.torque >> 8, 0, 0, 0, RMSControl.enabled, 0, 0};
+  FEB_CAN_transmit(RMS_CANx, 0x0C0, buffer, 8, 0);
+}
+
+void FEB_RMS_disable() {
+  RMSControl.enabled = 0;
+  FEB_RMS_updateTorque();
+}
+
+void FEB_RMS_enable() {
+  RMSControl.enabled = 1;
+  FEB_RMS_updateTorque();
+}
+
+void FEB_RMS_setTorque(uint16_t torque) {
+  RMSControl.torque = torque;
+  FEB_RMS_updateTorque();
+}
+
+float FEB_APPS_getBrakePedal() {
+  float brake_pedal = FEB_ADC_sampleChannel(&hadc1, ADC_CHANNEL_13);
+  float brake_normalized = (brake_pedal - BRAKE_PEDAL_RESET) / (BRAKE_PEDAL_FULL - BRAKE_PEDAL_RESET);
+
+  /* clamp */
+  brake_normalized = brake_normalized > 1 ? 1 : brake_normalized;
+  brake_normalized = brake_normalized < 0.05 ? 0 : brake_normalized;
+
+  return brake_normalized;
+}
+
+float FEB_APPS_getAccPedal() {
+  float acc_pedal_0 = FEB_ADC_sampleChannel(&hadc1, ADC_CHANNEL_10);
+  float acc_pedal_1 = FEB_ADC_sampleChannel(&hadc1, ADC_CHANNEL_11);
+
+  float acc_0_normalized = (acc_pedal_0 - ACC_PEDAL_0_RESET) / (ACC_PEDAL_0_FULL - ACC_PEDAL_0_RESET);
+  float acc_1_normalized = (acc_pedal_1 - ACC_PEDAL_1_RESET) / (ACC_PEDAL_1_FULL - ACC_PEDAL_1_RESET);
+
+  float acc_normalized = 0.5 * (acc_0_normalized + acc_1_normalized);
+
+  /* clamp */
+  acc_normalized = acc_normalized > 1 ? 1 : acc_normalized;
+  acc_normalized = acc_normalized < 0.05 ? 0 : acc_normalized;
+
+  return acc_normalized;
+}
+
+/* USER CODE END PFP */
+
+/* Private user code ---------------------------------------------------------*/
+/* USER CODE BEGIN 0 */
 
 /* USER CODE END 0 */
 
@@ -102,8 +273,7 @@ uint8_t FEB_CAN_transmit(CAN_HandleTypeDef *CANx, uint16_t can_id, uint8_t *data
   * @brief  The application entry point.
   * @retval int
   */
-int main(void)
-{
+int main(void) {
   /* USER CODE BEGIN 1 */
 
   /* USER CODE END 1 */
@@ -131,6 +301,9 @@ int main(void)
   MX_CAN1_Init();
   MX_CAN2_Init();
   /* USER CODE BEGIN 2 */
+
+  char str[128];
+
   uint32_t filter_id = 0;
   uint32_t filter_mask = 0x0;
 
@@ -148,10 +321,15 @@ int main(void)
 
   HAL_CAN_ConfigFilter(&hcan1, &filter_config);
 
+
   if (HAL_CAN_Start(&hcan1) != HAL_OK) {
     while (1)
     HAL_UART_Transmit(&huart2, (uint8_t *) "<APPS> [ERROR] CAN1 init error\r\n", strlen("<APPS> [ERROR] CAN1 init error\r\n"), 100);
   }
+
+  FEB_RMS_init(&hcan1);
+
+  FEB_RMS_setTorque(0);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -160,21 +338,52 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    float brake_pedal[2];
-    brake_pedal[0] = FEB_ADC_sampleChannel(&hadc1, ADC_CHANNEL_12);
 
-    float acc_pedal[2];
-    acc_pedal[0] = FEB_ADC_sampleChannel(&hadc1, ADC_CHANNEL_10);
-    acc_pedal[1] = FEB_ADC_sampleChannel(&hadc1, ADC_CHANNEL_11);
+    float brake_pedal = FEB_APPS_getBrakePedal();
+    float acc_pedal = FEB_APPS_getAccPedal();
 
-    FEB_CAN_transmit(&hcan1, 0x200, (uint8_t *)brake_pedal, 8);
-    FEB_CAN_transmit(&hcan1, 0x201, (uint8_t *)acc_pedal, 8);
+    float brake_pressure[2];
+    brake_pressure[0] = FEB_ADC_sampleChannel(&hadc1, ADC_CHANNEL_0);
+    brake_pressure[1] = FEB_ADC_sampleChannel(&hadc1, ADC_CHANNEL_1);
 
-    char str[128];
-    sprintf(str, "<APPS> [INFO] BRAKE(0x100): %f \tACC(0x101): %f, %f\r\n", brake_pedal[0], acc_pedal[0], acc_pedal[1]);
+    if (HAL_CAN_GetRxFifoFillLevel(&hcan1, CAN_RX_FIFO0) > 0 || HAL_CAN_GetRxFifoFillLevel(&hcan1, CAN_RX_FIFO1) > 0) {
+
+      CAN_RxHeaderTypeDef header;
+      uint8_t buffer[8];
+
+      HAL_CAN_GetRxMessage(&hcan1, CAN_RX_FIFO0, &header, buffer);
+
+      if (header.StdId == 0x200 && !buffer[0]) {
+        FEB_RMS_enable();
+
+        sprintf(str, "<APPS> [INFO] RMS Enabled\r\n");
+        HAL_UART_Transmit(&huart2, (uint8_t *)str, strlen(str), 100);
+      }
+      if (header.StdId == 0x200 && buffer[0]) {
+        FEB_RMS_disable();
+
+        sprintf(str, "<APPS> [INFO] RMS Disabled\r\n");
+        HAL_UART_Transmit(&huart2, (uint8_t *)str, strlen(str), 100);
+      }
+    }
+
+
+    float pedal_state[2];
+    pedal_state[0] = brake_pedal;
+    pedal_state[1] = acc_pedal;
+    FEB_CAN_transmit(&hcan1, 0x201, (uint8_t *)pedal_state, 8, 0);
+
+    // if we are braking, we dont need torque...
+    uint16_t torque = (brake_pedal < 0.1) ? brake_pedal > 0.1 : 0;
+
+    FEB_RMS_setTorque(torque);
+
+
+    sprintf(str, "<APPS> [INFO] Raw reading BRAKE(0x100): %f \tACC(0x101): %f\r\n", brake_pedal, acc_pedal);
     HAL_UART_Transmit(&huart2, (uint8_t *)str, strlen(str), 100);
 
-    HAL_Delay(10);
+
+    HAL_Delay(100);
   }
   /* USER CODE END 3 */
 }
