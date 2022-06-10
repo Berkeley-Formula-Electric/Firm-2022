@@ -78,12 +78,12 @@ HAL_StatusTypeDef FEB_CAN_transmit(CAN_HandleTypeDef *CANx, uint16_t can_id, uin
     }
   }
   else {
-    HAL_UART_Transmit(&huart2, (uint8_t *) "<APPS> [ERROR] CAN busy\r\n", strlen("<APPS> [ERROR] CAN busy\r\n"), 100);
+    HAL_UART_Transmit(&huart2, (uint8_t *) "<STEERINGWHEEL> [ERROR] CAN busy\r\n", strlen("<APPS> [ERROR] CAN busy\r\n"), 100);
     return HAL_BUSY;
   }
 
   if (HAL_CAN_AddTxMessage(CANx, &header, (uint8_t *)data, &mailbox) != HAL_OK) {
-    HAL_UART_Transmit(&huart2, (uint8_t *) "<APPS> [ERROR] CAN TX error\r\n", strlen("<APPS> [ERROR] CAN TX error\r\n"), 100);
+    HAL_UART_Transmit(&huart2, (uint8_t *) "<STEERINGWHEEL> [ERROR] CAN TX error\r\n", strlen("<APPS> [ERROR] CAN TX error\r\n"), 100);
     return HAL_ERROR;
   }
   return HAL_OK;
@@ -130,6 +130,43 @@ int main(void)
   /* USER CODE BEGIN 2 */
 
   char str[128];
+
+  uint32_t filter_id = 0;
+  uint32_t filter_mask = 0x0;
+
+  CAN_FilterTypeDef filter_config;
+  filter_config.FilterBank = 0;
+  filter_config.FilterMode = CAN_FILTERMODE_IDMASK;
+  filter_config.FilterFIFOAssignment = CAN_FILTER_FIFO0;
+  filter_config.FilterIdHigh = filter_id << 5;
+  filter_config.FilterIdLow = 0;
+  filter_config.FilterMaskIdHigh = filter_mask << 5;
+  filter_config.FilterMaskIdLow = 0;
+  filter_config.FilterScale = CAN_FILTERSCALE_32BIT;
+  filter_config.FilterActivation = ENABLE;
+  filter_config.SlaveStartFilterBank = 14;
+  HAL_CAN_ConfigFilter(&hcan1, &filter_config);
+
+  filter_config.FilterBank = 14;
+  filter_config.FilterMode = CAN_FILTERMODE_IDMASK;
+  filter_config.FilterFIFOAssignment = CAN_FILTER_FIFO0;
+  filter_config.FilterIdHigh = filter_id << 5;
+  filter_config.FilterIdLow = 0;
+  filter_config.FilterMaskIdHigh = filter_mask << 5;
+  filter_config.FilterMaskIdLow = 0;
+  filter_config.FilterScale = CAN_FILTERSCALE_32BIT;
+  filter_config.FilterActivation = ENABLE;
+  filter_config.SlaveStartFilterBank = 14;
+  HAL_CAN_ConfigFilter(&hcan2, &filter_config);
+
+  if (HAL_CAN_Start(&hcan1) != HAL_OK) {
+    while (1)
+    HAL_UART_Transmit(&huart2, (uint8_t *) "CAN init Error\r\n", strlen("CAN init Error\r\n"), 100);
+  }
+  if (HAL_CAN_Start(&hcan2) != HAL_OK) {
+    while (1)
+    HAL_UART_Transmit(&huart2, (uint8_t *) "CAN init Error\r\n", strlen("CAN init Error\r\n"), 100);
+  }
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -160,6 +197,15 @@ int main(void)
       HAL_UART_Transmit(&huart2, (uint8_t *)str, strlen(str), 100);
 
       uint8_t buffer = 0;
+      FEB_CAN_transmit(&hcan1, 0x200, &buffer, 1, 1);
+    }
+
+    if (!(button_bank_1 & 0b1)) {
+
+      sprintf(str, "disable drive\r\n");
+      HAL_UART_Transmit(&huart2, (uint8_t *)str, strlen(str), 100);
+
+      uint8_t buffer = 1;
       FEB_CAN_transmit(&hcan1, 0x200, &buffer, 1, 1);
     }
 

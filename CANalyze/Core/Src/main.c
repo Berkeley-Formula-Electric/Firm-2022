@@ -142,17 +142,17 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    uint32_t can2_fifolevel = HAL_CAN_GetRxFifoFillLevel(&hcan2, CAN_RX_FIFO0) || HAL_CAN_GetRxFifoFillLevel(&hcan2, CAN_RX_FIFO1);
+    uint32_t can1_fifolevel = HAL_CAN_GetRxFifoFillLevel(&hcan1, CAN_RX_FIFO0) || HAL_CAN_GetRxFifoFillLevel(&hcan1, CAN_RX_FIFO1);
 
-    if (can2_fifolevel > 0) {
+    if (can1_fifolevel > 0) {
       CAN_RxHeaderTypeDef header;
       uint8_t data[8];
 
-      HAL_CAN_GetRxMessage(&hcan2, CAN_RX_FIFO0, &header, data);
+      HAL_CAN_GetRxMessage(&hcan1, CAN_RX_FIFO0, &header, data);
 
       char str[64];
 
-      sprintf(str, "%d %d", header.StdId, header.DLC);
+      sprintf(str, "CAN1 %d %d", header.StdId, header.DLC);
       HAL_UART_Transmit(&huart2, (uint8_t *)str, strlen(str), 100);
 
       for (uint16_t i=0; i<header.DLC; i+=1) {
@@ -164,6 +164,31 @@ int main(void)
       HAL_UART_Transmit(&huart2, (uint8_t *)str, strlen(str), 100);
 
     }
+
+    uint32_t can2_fifolevel = HAL_CAN_GetRxFifoFillLevel(&hcan2, CAN_RX_FIFO0) || HAL_CAN_GetRxFifoFillLevel(&hcan2, CAN_RX_FIFO1);
+
+    if (can2_fifolevel > 0) {
+      CAN_RxHeaderTypeDef header;
+      uint8_t data[8];
+
+      HAL_CAN_GetRxMessage(&hcan2, CAN_RX_FIFO0, &header, data);
+
+      char str[64];
+
+      sprintf(str, "CAN2 %d %d", header.StdId, header.DLC);
+      HAL_UART_Transmit(&huart2, (uint8_t *)str, strlen(str), 100);
+
+      for (uint16_t i=0; i<header.DLC; i+=1) {
+        sprintf(str, " %d", data[i]);
+        HAL_UART_Transmit(&huart2, (uint8_t *)str, strlen(str), 100);
+      }
+
+      sprintf(str, "\n");
+      HAL_UART_Transmit(&huart2, (uint8_t *)str, strlen(str), 100);
+
+    }
+
+
     HAL_Delay(100);
   }
   /* USER CODE END 3 */
