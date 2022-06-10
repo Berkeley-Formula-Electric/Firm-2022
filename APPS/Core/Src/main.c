@@ -130,7 +130,7 @@ HAL_StatusTypeDef FEB_CAN_transmit(CAN_HandleTypeDef *CANx, uint16_t can_id, uin
       tx_fifo_level = HAL_CAN_GetTxMailboxesFreeLevel(CANx);
     }
   }
-  else {
+  else if (tx_fifo_level == 0) {
     HAL_UART_Transmit(&huart2, (uint8_t *) "<APPS> [ERROR] CAN busy\r\n", strlen("<APPS> [ERROR] CAN busy\r\n"), 100);
     return HAL_BUSY;
   }
@@ -231,7 +231,7 @@ void FEB_RMS_enable() {
 }
 
 void FEB_RMS_setTorque(uint16_t torque) {
-  RMSControl.torque = torque;
+  RMSControl.torque = torque * 10;
   FEB_RMS_updateTorque();
 }
 
@@ -273,7 +273,8 @@ float FEB_APPS_getAccPedal() {
   * @brief  The application entry point.
   * @retval int
   */
-int main(void) {
+int main(void)
+{
   /* USER CODE BEGIN 1 */
 
   /* USER CODE END 1 */
@@ -304,8 +305,8 @@ int main(void) {
 
   char str[128];
 
-  uint32_t filter_id = 0;
-  uint32_t filter_mask = 0x0;
+  uint32_t filter_id = 0x200;
+  uint32_t filter_mask = 0xFFF;
 
   CAN_FilterTypeDef filter_config;
   filter_config.FilterBank = 0;
@@ -330,6 +331,15 @@ int main(void) {
   FEB_RMS_init(&hcan1);
 
   FEB_RMS_setTorque(0);
+
+
+  for (uint16_t i=0; i<50; i+=1) {
+    FEB_RMS_setTorque(0);
+    HAL_Delay(100);
+  }
+//  FEB_RMS_enable();
+  sprintf(str, "<APPS> [INFO] RMS Enabled\r\n");
+  HAL_UART_Transmit(&huart2, (uint8_t *)str, strlen(str), 100);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -374,12 +384,13 @@ int main(void) {
     FEB_CAN_transmit(&hcan1, 0x201, (uint8_t *)pedal_state, 8, 0);
 
     // if we are braking, we dont need torque...
-    uint16_t torque = (brake_pedal < 0.1) ? brake_pedal > 0.1 : 0;
+    uint16_t torque = acc_pedal * 50; // coefficient in Nm
+//    uint16_t torque = (brake_pedal < 0.1) ? acc_pedal * 100 : 0;
 
     FEB_RMS_setTorque(torque);
 
 
-    sprintf(str, "<APPS> [INFO] Raw reading BRAKE(0x100): %f \tACC(0x101): %f\r\n", brake_pedal, acc_pedal);
+    sprintf(str, "<APPS> [INFO] BRAKE(0x100): %f \tACC(0x101): %f \ttorque: %d\r\n", brake_pedal, acc_pedal, torque);
     HAL_UART_Transmit(&huart2, (uint8_t *)str, strlen(str), 100);
 
 
