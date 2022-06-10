@@ -160,8 +160,7 @@ float getVoltage(uint16_t val) {
 }
 
 float getTemperature(uint16_t val) {
-//  return val == 65535 ? -42 : val * 0.0001;
-  return 7550 - 16186 * (0.0001 * val) + 13149*pow(0.0001 * val,2) - 4755*pow(0.0001 * val,3) + 642*pow(0.0001 * val,4);
+  return val == 65535 ? -42 : 7550 - 16186 * (0.0001 * val) + 13149*pow(0.0001 * val,2) - 4755*pow(0.0001 * val,3) + 642*pow(0.0001 * val,4);
 }
 
 
