@@ -23,6 +23,9 @@
 /* USER CODE BEGIN Includes */
 #include <string.h>
 #include <stdio.h>
+
+#include "FEB_log.h"
+#include "FEB_CAN.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -32,6 +35,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+#define MODULE_NAME     "STEERINGWHEEL"
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -40,7 +44,7 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
- CAN_HandleTypeDef hcan1;
+CAN_HandleTypeDef hcan1;
 CAN_HandleTypeDef hcan2;
 
 I2C_HandleTypeDef hi2c1;
@@ -60,34 +64,6 @@ static void MX_I2C1_Init(void);
 static void MX_USART2_UART_Init(void);
 /* USER CODE BEGIN PFP */
 
-HAL_StatusTypeDef FEB_CAN_transmit(CAN_HandleTypeDef *CANx, uint16_t can_id, uint8_t *data, uint16_t size, uint8_t is_blocking) {
-  uint32_t mailbox;
-
-  CAN_TxHeaderTypeDef header;
-  header.DLC = size;
-  header.IDE = CAN_ID_STD;
-  header.RTR = CAN_RTR_DATA;
-  header.StdId = can_id;
-  header.TransmitGlobalTime = DISABLE;
-
-  uint32_t tx_fifo_level = HAL_CAN_GetTxMailboxesFreeLevel(CANx);
-
-  if (is_blocking) {
-    while (tx_fifo_level == 0) {
-      tx_fifo_level = HAL_CAN_GetTxMailboxesFreeLevel(CANx);
-    }
-  }
-  else {
-    HAL_UART_Transmit(&huart2, (uint8_t *) "<STEERINGWHEEL> [ERROR] CAN busy\r\n", strlen("<APPS> [ERROR] CAN busy\r\n"), 100);
-    return HAL_BUSY;
-  }
-
-  if (HAL_CAN_AddTxMessage(CANx, &header, (uint8_t *)data, &mailbox) != HAL_OK) {
-    HAL_UART_Transmit(&huart2, (uint8_t *) "<STEERINGWHEEL> [ERROR] CAN TX error\r\n", strlen("<APPS> [ERROR] CAN TX error\r\n"), 100);
-    return HAL_ERROR;
-  }
-  return HAL_OK;
-}
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -128,44 +104,16 @@ int main(void)
   MX_I2C1_Init();
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
-
-  char str[128];
-
-  uint32_t filter_id = 0;
-  uint32_t filter_mask = 0x0;
-
-  CAN_FilterTypeDef filter_config;
-  filter_config.FilterBank = 0;
-  filter_config.FilterMode = CAN_FILTERMODE_IDMASK;
-  filter_config.FilterFIFOAssignment = CAN_FILTER_FIFO0;
-  filter_config.FilterIdHigh = filter_id << 5;
-  filter_config.FilterIdLow = 0;
-  filter_config.FilterMaskIdHigh = filter_mask << 5;
-  filter_config.FilterMaskIdLow = 0;
-  filter_config.FilterScale = CAN_FILTERSCALE_32BIT;
-  filter_config.FilterActivation = ENABLE;
-  filter_config.SlaveStartFilterBank = 14;
-  HAL_CAN_ConfigFilter(&hcan1, &filter_config);
-
-  filter_config.FilterBank = 14;
-  filter_config.FilterMode = CAN_FILTERMODE_IDMASK;
-  filter_config.FilterFIFOAssignment = CAN_FILTER_FIFO0;
-  filter_config.FilterIdHigh = filter_id << 5;
-  filter_config.FilterIdLow = 0;
-  filter_config.FilterMaskIdHigh = filter_mask << 5;
-  filter_config.FilterMaskIdLow = 0;
-  filter_config.FilterScale = CAN_FILTERSCALE_32BIT;
-  filter_config.FilterActivation = ENABLE;
-  filter_config.SlaveStartFilterBank = 14;
-  HAL_CAN_ConfigFilter(&hcan2, &filter_config);
+  FEB_CAN_initFilter(&hcan1, 0, 0);
+  FEB_CAN_initFilter(&hcan2, 0, 0);
 
   if (HAL_CAN_Start(&hcan1) != HAL_OK) {
     while (1)
-    HAL_UART_Transmit(&huart2, (uint8_t *) "CAN init Error\r\n", strlen("CAN init Error\r\n"), 100);
+      FEB_log(MODULE_NAME, "CRITICAL", "CAN1 initialization error");
   }
   if (HAL_CAN_Start(&hcan2) != HAL_OK) {
     while (1)
-    HAL_UART_Transmit(&huart2, (uint8_t *) "CAN init Error\r\n", strlen("CAN init Error\r\n"), 100);
+      FEB_log(MODULE_NAME, "CRITICAL", "CAN1 initialization error");
   }
   /* USER CODE END 2 */
 
@@ -180,37 +128,30 @@ int main(void)
     uint8_t button_bank_1;
 
     if (HAL_I2C_Master_Receive(&hi2c1, 0x41, &button_bank_0, 1, 100) != HAL_OK) {
-
-      sprintf(str, "readerr\r\n");
-      HAL_UART_Transmit(&huart2, (uint8_t *)str, strlen(str), 100);
+      FEB_log(MODULE_NAME, "ERROR", "I2C btn bank 0 read error");
     }
 
     if (HAL_I2C_Master_Receive(&hi2c1, 0x42, &button_bank_1, 1, 100) != HAL_OK) {
-
-      sprintf(str, "readerr\r\n");
-      HAL_UART_Transmit(&huart2, (uint8_t *)str, strlen(str), 100);
+      FEB_log(MODULE_NAME, "ERROR", "I2C btn bank 1 read error");
     }
 
     if (!(button_bank_0 & 0b1)) {
-
-      sprintf(str, "ready to drive\r\n");
-      HAL_UART_Transmit(&huart2, (uint8_t *)str, strlen(str), 100);
+      FEB_log(MODULE_NAME, "INFO", "ready to drive!");
 
       uint8_t buffer = 0;
       FEB_CAN_transmit(&hcan1, 0x200, &buffer, 1, 1);
     }
 
     if (!(button_bank_1 & 0b1)) {
-
-      sprintf(str, "disable drive\r\n");
-      HAL_UART_Transmit(&huart2, (uint8_t *)str, strlen(str), 100);
+      FEB_log(MODULE_NAME, "INFO", "drivetrain shut down!");
 
       uint8_t buffer = 1;
       FEB_CAN_transmit(&hcan1, 0x200, &buffer, 1, 1);
     }
 
+    char str[64];
     sprintf(str, "buttons: %d %d\r\n", button_bank_0, button_bank_1);
-    HAL_UART_Transmit(&huart2, (uint8_t *)str, strlen(str), 100);
+    FEB_log(MODULE_NAME, "DEBUG", str);
 
     HAL_Delay(100);
   }

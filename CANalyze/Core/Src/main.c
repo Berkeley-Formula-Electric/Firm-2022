@@ -23,6 +23,7 @@
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
 #include <string.h>
+#include "FEB_CAN.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
