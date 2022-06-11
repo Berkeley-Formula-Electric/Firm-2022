@@ -24,7 +24,6 @@
 #include <string.h>
 #include <stdio.h>
 
-#include "FEB_logger.h"
 #include "FEB_CAN.h"
 /* USER CODE END Includes */
 
@@ -35,7 +34,14 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define MODULE_NAME     "STEERINGWHEEL"
+#define MODULE_NAME       "STEERINGWHEEL"
+
+#define DEBUG             0
+
+#define NLSM_END          0x0A
+#define NLSM_ESC          0x0B
+#define NLSM_ESC_END      0x1A
+#define NLSM_ESC_ESC      0x1B
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -44,11 +50,12 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
-CAN_HandleTypeDef hcan1;
+ CAN_HandleTypeDef hcan1;
 CAN_HandleTypeDef hcan2;
 
 I2C_HandleTypeDef hi2c1;
 
+UART_HandleTypeDef huart1;
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
@@ -62,7 +69,36 @@ static void MX_CAN1_Init(void);
 static void MX_CAN2_Init(void);
 static void MX_I2C1_Init(void);
 static void MX_USART2_UART_Init(void);
+static void MX_USART1_UART_Init(void);
 /* USER CODE BEGIN PFP */
+
+void FEB_NLSM_transmit(uint8_t *buffer) {
+  uint8_t temp;
+  for (uint16_t i=0; i<12; i+=1) {
+    if (buffer[i] == NLSM_ESC) {
+      HAL_UART_Transmit(&huart1, &(buffer[i]), 1, 100);
+      HAL_UART_Transmit(&huart2, &(buffer[i]), 1, 100);
+      temp = NLSM_ESC_ESC;
+      HAL_UART_Transmit(&huart1, &temp, 1, 100);
+      HAL_UART_Transmit(&huart2, &temp, 1, 100);
+    }
+    else if (buffer[i] == NLSM_END) {
+      temp = NLSM_ESC;
+      HAL_UART_Transmit(&huart1, &temp, 1, 100);
+      HAL_UART_Transmit(&huart2, &temp, 1, 100);
+      temp = NLSM_ESC_END;
+      HAL_UART_Transmit(&huart1, &temp, 1, 100);
+      HAL_UART_Transmit(&huart2, &temp, 1, 100);
+    }
+    else {
+      HAL_UART_Transmit(&huart1, &(buffer[i]), 1, 100);
+      HAL_UART_Transmit(&huart2, &(buffer[i]), 1, 100);
+    }
+  }
+  temp = NLSM_END;
+  HAL_UART_Transmit(&huart1, &temp, 1, 100);
+  HAL_UART_Transmit(&huart2, &temp, 1, 100);
+}
 
 /* USER CODE END PFP */
 
@@ -103,18 +139,21 @@ int main(void)
   MX_CAN2_Init();
   MX_I2C1_Init();
   MX_USART2_UART_Init();
+  MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
   FEB_CAN_initFilter(&hcan1, 0, 0);
   FEB_CAN_initFilter(&hcan2, 0, 0);
 
   if (HAL_CAN_Start(&hcan1) != HAL_OK) {
-    while (1)
-      FEB_log(MODULE_NAME, "CRITICAL", "CAN1 initialization error");
+//    while (1)
+//      FEB_log(MODULE_NAME, "CRITICAL", "CAN1 initialization error");
   }
   if (HAL_CAN_Start(&hcan2) != HAL_OK) {
-    while (1)
-      FEB_log(MODULE_NAME, "CRITICAL", "CAN1 initialization error");
+//    while (1)
+//      FEB_log(MODULE_NAME, "CRITICAL", "CAN1 initialization error");
   }
+
+  uint32_t counter = 0;
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -124,36 +163,66 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    uint8_t button_bank_0;
-    uint8_t button_bank_1;
+    if (counter > 10) {
+      uint8_t button_bank_0;
+      uint8_t button_bank_1;
 
-    if (HAL_I2C_Master_Receive(&hi2c1, 0x41, &button_bank_0, 1, 100) != HAL_OK) {
-      FEB_log(MODULE_NAME, "ERROR", "I2C btn bank 0 read error");
+      if (HAL_I2C_Master_Receive(&hi2c1, 0x41, &button_bank_0, 1, 100) != HAL_OK) {
+        if (DEBUG) FEB_log(MODULE_NAME, "ERROR", "I2C btn bank 0 read error");
+      }
+
+      if (HAL_I2C_Master_Receive(&hi2c1, 0x42, &button_bank_1, 1, 100) != HAL_OK) {
+        if (DEBUG) FEB_log(MODULE_NAME, "ERROR", "I2C btn bank 1 read error");
+      }
+
+      if (!(button_bank_0 & 0b1)) {
+        if (DEBUG) FEB_log(MODULE_NAME, "INFO", "ready to drive!");
+
+        uint8_t buffer = 0;
+        FEB_CAN_transmit(&hcan1, 0x200, &buffer, 1, 1);
+
+        uint8_t log_buffer[12] = {0x00, 0x02, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0};
+        FEB_NLSM_transmit(log_buffer);
+      }
+
+      if (!(button_bank_1 & 0b1)) {
+        if (DEBUG) FEB_log(MODULE_NAME, "INFO", "drivetrain shut down!");
+
+        uint8_t buffer = 1;
+        FEB_CAN_transmit(&hcan1, 0x200, &buffer, 1, 1);
+
+        uint8_t log_buffer[12] = {0x00, 0x02, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0};
+        FEB_NLSM_transmit(log_buffer);
+      }
+      counter = 0;
     }
 
-    if (HAL_I2C_Master_Receive(&hi2c1, 0x42, &button_bank_1, 1, 100) != HAL_OK) {
-      FEB_log(MODULE_NAME, "ERROR", "I2C btn bank 1 read error");
+    counter += 1;
+
+    if (HAL_CAN_GetRxFifoFillLevel(&hcan1, CAN_RX_FIFO0) > 0 || HAL_CAN_GetRxFifoFillLevel(&hcan1, CAN_RX_FIFO1) > 0) {
+      CAN_RxHeaderTypeDef header;
+      uint8_t buffer[8];
+
+      HAL_CAN_GetRxMessage(&hcan1, CAN_RX_FIFO0, &header, buffer);
+
+      uint8_t log_buffer[16];
+
+      ((uint16_t *)log_buffer)[0] = header.StdId;
+      log_buffer[2] = header.RTR;
+      log_buffer[3] = header.DLC;
+      log_buffer[4] = buffer[0];
+      log_buffer[5] = buffer[1];
+      log_buffer[6] = buffer[2];
+      log_buffer[7] = buffer[3];
+      log_buffer[8] = buffer[4];
+      log_buffer[9] = buffer[5];
+      log_buffer[10] = buffer[6];
+      log_buffer[11] = buffer[7];
+
+      FEB_NLSM_transmit(log_buffer);
     }
 
-    if (!(button_bank_0 & 0b1)) {
-      FEB_log(MODULE_NAME, "INFO", "ready to drive!");
-
-      uint8_t buffer = 0;
-      FEB_CAN_transmit(&hcan1, 0x200, &buffer, 1, 1);
-    }
-
-    if (!(button_bank_1 & 0b1)) {
-      FEB_log(MODULE_NAME, "INFO", "drivetrain shut down!");
-
-      uint8_t buffer = 1;
-      FEB_CAN_transmit(&hcan1, 0x200, &buffer, 1, 1);
-    }
-
-    char str[64];
-    sprintf(str, "buttons: %d %d\r\n", button_bank_0, button_bank_1);
-    FEB_log(MODULE_NAME, "DEBUG", str);
-
-    HAL_Delay(100);
+    HAL_Delay(10);
   }
   /* USER CODE END 3 */
 }
@@ -310,6 +379,39 @@ static void MX_I2C1_Init(void)
   /* USER CODE BEGIN I2C1_Init 2 */
 
   /* USER CODE END I2C1_Init 2 */
+
+}
+
+/**
+  * @brief USART1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_USART1_UART_Init(void)
+{
+
+  /* USER CODE BEGIN USART1_Init 0 */
+
+  /* USER CODE END USART1_Init 0 */
+
+  /* USER CODE BEGIN USART1_Init 1 */
+
+  /* USER CODE END USART1_Init 1 */
+  huart1.Instance = USART1;
+  huart1.Init.BaudRate = 115200;
+  huart1.Init.WordLength = UART_WORDLENGTH_8B;
+  huart1.Init.StopBits = UART_STOPBITS_1;
+  huart1.Init.Parity = UART_PARITY_NONE;
+  huart1.Init.Mode = UART_MODE_TX_RX;
+  huart1.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart1.Init.OverSampling = UART_OVERSAMPLING_16;
+  if (HAL_UART_Init(&huart1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN USART1_Init 2 */
+
+  /* USER CODE END USART1_Init 2 */
 
 }
 
