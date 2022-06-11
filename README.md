@@ -52,6 +52,8 @@ Used to debug CAN bus.
 
 Run `scripts/update_libraries.py` after library update to sync the update to every project workspace.
 
+Note that because STM32CubeIDE will NOT initialize peripherals that are not used in the project, so if you see compilation error in the library source code, you can simply delete that source file.
+
 ### Logger
 
 ```C

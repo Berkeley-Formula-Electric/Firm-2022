@@ -1,7 +1,7 @@
 #pragma once
 
 #include "stm32f4xx_hal.h"
-#include "FEB_log.h"
+#include "FEB_logger.h"
 
 void FEB_CAN_initFilter(CAN_HandleTypeDef *CANx, uint32_t filter_id, uint32_t filter_mask);
 

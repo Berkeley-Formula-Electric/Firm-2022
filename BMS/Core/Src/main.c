@@ -21,9 +21,11 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include <string.h>
-#include <stdio.h>
+#include <math.h>
+
 #include "LTC6811.h"
+#include "FEB_logger.h"
+#include "FEB_CAN.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -51,6 +53,8 @@ typedef struct {
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+#define MODULE_NAME     "BMS"
+
 #define ENABLED               1
 #define DISABLED              0
 #define DATALOG_ENABLED       1
@@ -234,22 +238,8 @@ int main(void)
   LTC6811_reset_crc_count(N_ICS, accumulator.config);
   LTC6811_init_reg_limits(N_ICS, accumulator.config);
 
-  uint32_t filter_id = 0;
-  uint32_t filter_mask = 0x0;
-
-  CAN_FilterTypeDef filter_config;
-  filter_config.FilterBank = 0;
-  filter_config.FilterMode = CAN_FILTERMODE_IDMASK;
-  filter_config.FilterFIFOAssignment = CAN_FILTER_FIFO0;
-  filter_config.FilterIdHigh = filter_id << 5;
-  filter_config.FilterIdLow = 0;
-  filter_config.FilterMaskIdHigh = filter_mask << 5;
-  filter_config.FilterMaskIdLow = 0;
-  filter_config.FilterScale = CAN_FILTERSCALE_32BIT;
-  filter_config.FilterActivation = ENABLE;
-  filter_config.SlaveStartFilterBank = 14;
-
-  HAL_CAN_ConfigFilter(&hcan1, &filter_config);
+  FEB_CAN_initFilter(&hcan1, 0, 0);
+  FEB_CAN_initFilter(&hcan2, 0, 0);
 
   if (HAL_CAN_Start(&hcan1) != HAL_OK) {
     while (1)
@@ -271,9 +261,6 @@ int main(void)
     int8_t error = 0;
 
     char str[128];
-
-
-
 
     LTC6811_init_cfg(N_ICS, accumulator.config);
     uint8_t temperature_ch = 0;
@@ -298,7 +285,7 @@ int main(void)
 
 
     sprintf(str, "error code %d\r\n", error);
-    HAL_UART_Transmit(&huart2, (uint8_t*) str, strlen(str), 100);
+    FEB_log(MODULE_NAME, "DEBUG", str);
 
     for (uint16_t bank_idx = 0; bank_idx < N_BANKS; bank_idx += 1) {
       accumulator.banks[bank_idx].cells[16].voltage = getVoltage(accumulator.config[bank_idx * 2].cells.c_codes[0]);
@@ -358,8 +345,6 @@ int main(void)
       accumulator.banks[bank_idx].cells[0].temperature = getTemperature(accumulator.config[bank_idx * 2 + 1].aux.a_codes[0]);
     }
 
-
-
     for (uint16_t bank_idx = 0; bank_idx < N_BANKS; bank_idx += 1) {
       sprintf(str, "======= Bank %d ========\r\n", bank_idx);
       HAL_UART_Transmit(&huart2, (uint8_t*) str, strlen(str), 100);
@@ -396,26 +381,16 @@ int main(void)
 
     }
 
-
-    uint32_t tx_mailbox;
-    CAN_TxHeaderTypeDef tx_header;
-    tx_header.DLC = 8;
-    tx_header.IDE = CAN_ID_STD;
-    tx_header.RTR = CAN_RTR_DATA;
-    tx_header.TransmitGlobalTime = DISABLE;
-
     for (uint16_t bank_idx = 0; bank_idx < N_BANKS; bank_idx += 1) {
       for (uint16_t cell_idx = 0; cell_idx < 17; cell_idx += 1) {
-        tx_header.StdId = 0x500 + (bank_idx * CELLS_PER_BANK) + cell_idx;
+        uint32_t can_id = 0x500 + (bank_idx * CELLS_PER_BANK) + cell_idx;
 
         float data[2];
-
         data[0] = accumulator.banks[bank_idx].cells[cell_idx].voltage;
         data[1] = accumulator.banks[bank_idx].cells[cell_idx].temperature;
 
-        if (HAL_CAN_AddTxMessage(&hcan2, &tx_header, (uint8_t *)data, &tx_mailbox) != HAL_OK) {
-          HAL_UART_Transmit(&huart2, (uint8_t *) "CAN TX Error\r\n", strlen("CAN TX Error\r\n"), 100);
-        }
+        FEB_CAN_transmit(&hcan2, can_id, (uint8_t *)data, 8, 0);
+
         HAL_Delay(10);
       }
     }
