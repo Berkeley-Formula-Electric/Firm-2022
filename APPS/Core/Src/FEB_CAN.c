@@ -40,7 +40,7 @@ HAL_StatusTypeDef FEB_CAN_transmit(CAN_HandleTypeDef *CANx, uint16_t can_id, uin
       tx_fifo_level = HAL_CAN_GetTxMailboxesFreeLevel(CANx);
     }
   }
-  else {
+  else if (tx_fifo_level == 0) {
     FEB_log("STEERINGWHEEL", "ERROR", "CAN busy");
     return HAL_BUSY;
   }

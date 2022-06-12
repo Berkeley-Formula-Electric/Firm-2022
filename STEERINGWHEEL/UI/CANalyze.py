@@ -145,11 +145,18 @@ def serialHandler():
             database["APPS_torque_command"] = torque
             database["APPS_RMS_enabled_command"] = enabled
         
+        elif can_id == 0x200:
+            database["STEERINGWHEEL_ready_to_drive"] = buffer[4]
+        
         elif can_id == 0x201:
             brake_pedal, acc_pedal = struct.unpack("<ff", buffer[4:])
             database["APPS_brake_pedal"] = brake_pedal
             database["APPS_acc_pedal"] = acc_pedal
+
+        elif can_id == 0x300:
+            database["LVPDB"] = buffer[4]
         
+
 
 
 t = threading.Thread(target=serialHandler)

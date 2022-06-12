@@ -118,6 +118,8 @@ FEB_log(MODULE_NAME, "DEBUG", str);
 
 ## CAN ID Allocation Table
 
-| CAN ID | Device Name | Description |
-| ------ | ----------- | ----------- |
-|        |             |             |
+| CAN ID | Device Name | Data Length | Description |
+| ------ | ----------- | ----------- | ----------- |
+| 0x0C0  | APPS        | 8           | APPS to RMS command data. First two bytes are uint16_t torque value, in 10x N·m. 5th index (starting from 0) is RMS enabled control bit. |
+| 0x200  | Steering Wheel | 1        | Steering Wheel `ready to drive` state. 0 indicate ready to drive, non-zero value indicate not ready to drive. |
+| 0x201  | APPS        | 8           | APPS pedal broadcast. Consists of two floats, [brake_pedal, acc_pedal] |
