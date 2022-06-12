@@ -124,7 +124,7 @@ stopped = threading.Event()
 database = {}
 
 def serialHandler():
-    ser = Serializer("COM11", 115200, timeout=0.1)
+    ser = Serializer("/dev/serial0", 115200, timeout=0.1)
 
     while not stopped.is_set():
         buffer = ser.receive()
