@@ -65,8 +65,8 @@ struct {
 /* USER CODE BEGIN PD */
 #define MODULE_NAME     "APPS"
 
-#define BRAKE_PEDAL_RESET       0.566
-#define BRAKE_PEDAL_FULL        0.581
+#define BRAKE_PEDAL_RESET       0.513
+#define BRAKE_PEDAL_FULL        0.602
 
 #define ACC_PEDAL_0_RESET       1.128
 #define ACC_PEDAL_0_FULL        0.305
@@ -214,6 +214,9 @@ int main(void) {
     pedal_state[0] = brake_pedal;
     pedal_state[1] = acc_pedal;
     FEB_CAN_transmit(&hcan1, 0x201, (uint8_t *)pedal_state, 8, 0);
+
+    uint8_t brake_light_control = 0b01000001;
+    FEB_CAN_transmit(&hcan1, 0x300, &brake_light_control, 1, 0);
 
     // if we are braking, we dont need torque...
     // coefficient in Nm
@@ -547,6 +550,9 @@ void FEB_RMS_setTorque(uint16_t torque) {
 
 float FEB_APPS_getBrakePedal() {
   float brake_pedal = FEB_ADC_sampleChannel(&hadc1, ADC_CHANNEL_13);
+//  char str[128];
+//  sprintf(str, "%f\t", brake_pedal);
+//  FEB_log("", "", str);
   float brake_normalized = (brake_pedal - BRAKE_PEDAL_RESET) / (BRAKE_PEDAL_FULL - BRAKE_PEDAL_RESET);
 
   /* clamp */
@@ -559,6 +565,9 @@ float FEB_APPS_getBrakePedal() {
 float FEB_APPS_getAccPedal() {
   float acc_pedal_0 = FEB_ADC_sampleChannel(&hadc1, ADC_CHANNEL_10);
   float acc_pedal_1 = FEB_ADC_sampleChannel(&hadc1, ADC_CHANNEL_11);
+//  char str[128];
+//  sprintf(str, "%f\t%f\t", acc_pedal_0, acc_pedal_1);
+//  FEB_log("", "", str);
 
   float acc_0_normalized = (acc_pedal_0 - ACC_PEDAL_0_RESET) / (ACC_PEDAL_0_FULL - ACC_PEDAL_0_RESET);
   float acc_1_normalized = (acc_pedal_1 - ACC_PEDAL_1_RESET) / (ACC_PEDAL_1_FULL - ACC_PEDAL_1_RESET);
