@@ -41,12 +41,12 @@ HAL_StatusTypeDef FEB_CAN_transmit(CAN_HandleTypeDef *CANx, uint16_t can_id, uin
     }
   }
   else if (tx_fifo_level == 0) {
-    FEB_log("STEERINGWHEEL", "ERROR", "CAN busy");
+    FEB_log("FEB_CAN", "ERROR", "CAN busy");
     return HAL_BUSY;
   }
 
   if (HAL_CAN_AddTxMessage(CANx, &header, (uint8_t *)data, &mailbox) != HAL_OK) {
-    FEB_log("STEERINGWHEEL", "ERROR", "CAN TX error");
+    FEB_log("FEB_CAN", "ERROR", "CAN TX error");
     return HAL_ERROR;
   }
   return HAL_OK;
