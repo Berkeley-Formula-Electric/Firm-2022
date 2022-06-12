@@ -1,0 +1,62 @@
+<html>
+<head>
+  <title>CANalyze Panel</title>
+  <style>
+    body {
+      background: #000;
+      color: #EEE;
+    }
+    .entry {
+      display: flex;
+      flex-direction: row;
+      border-bottom: 1px solid #666;
+    }
+    .key {
+      width: 32rem;
+    }
+    .val {
+      width: 32rem;
+    }
+  </style>
+</head>
+<body>
+  <div id="conn_status">DISCONNECTED</div>
+  <div id="contents"></div>
+  <script>
+
+  var database = {};
+
+  var fetchData = function() {
+    fetch("/getdata", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      }
+    })
+    .then(response => response.json())
+    .then(data => {
+      conn_status.innerHTML = "CONNECTED";
+      console.log(data);
+      database = data;
+    })
+    .catch((error) => {
+      console.error("Error:", error);
+      conn_status.innerHTML = "ERROR";
+    });
+
+
+    contents.innerHTML = "";
+
+    for (key in database) {
+      contents.innerHTML += "<div class=\"entry\"><div class=\"key\">"+key+"</div><div class=\"val\">"+database[key]+"</div></div>";
+    }
+  };
+
+  
+
+  window.onload = function() {
+    setInterval(fetchData, 100);
+  }
+  </script>
+</body>
+</html>
