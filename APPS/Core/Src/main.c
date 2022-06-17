@@ -215,7 +215,8 @@ int main(void) {
     pedal_state[1] = acc_pedal;
     FEB_CAN_transmit(&hcan1, 0x201, (uint8_t *)pedal_state, 8, 0);
 
-    uint8_t brake_light_control = 0b01000001;
+
+    uint8_t brake_light_control = 0b01000000;
     FEB_CAN_transmit(&hcan1, 0x300, &brake_light_control, 1, 0);
 
     // if we are braking, we dont need torque...
@@ -534,11 +535,17 @@ void FEB_RMS_updateTorque() {
 }
 
 void FEB_RMS_disable() {
+  uint8_t pump_control = 0b01010000;
+  FEB_CAN_transmit(&hcan1, 0x305, &pump_control, 1, 0);
+
   RMSControl.enabled = 0;
   FEB_RMS_updateTorque();
 }
 
 void FEB_RMS_enable() {
+  uint8_t pump_control = 0b01010001;
+  FEB_CAN_transmit(&hcan1, 0x305, &pump_control, 1, 0);
+
   RMSControl.enabled = 1;
   FEB_RMS_updateTorque();
 }
