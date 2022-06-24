@@ -22,8 +22,23 @@ The pinout of the connector is shown below
 | 12V        | 7               | Dashed <span style="color:brown">Brown</span> |
 | GND        | 8               | <span style="color:brown">Brown</span> |
 
+
 **Note: 12V and GND are only connected from APPS to STEERINGWHEEL, used to supply power to STEERINGWHEEL. Thus, the STEERINGWHEEL must connect to APPS's RIGHT Ethernet connector.**
 
+### New Pinout
+
+Using `T568B` type connection for RJ45.
+
+| CAN Signal | RJ45 Wire Index | RJ45 Color |
+| ---------- | --------------- | ---------- |
+| CAN1 High  | 1               | Dashed <span style="color:orange">Orange</span> |
+| CAN1 Low   | 2               | <span style="color:orange">Orange</span> |
+| CAN2 High  | 3               | Dashed <span style="color:green">Green</span> |
+| 12V        | 4               | <span style="color:blue">Blue</span> |
+| 12V        | 5               | Dashed <span style="color:blue">Blue</span> |
+| CAN2 Low   | 6               | <span style="color:green">Green</span> |
+| GND        | 7               | Dashed <span style="color:brown">Brown</span> |
+| GND        | 8               | <span style="color:brown">Brown</span> |
 
 ## Module Overview
 
